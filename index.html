@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>日下家の家計簿</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  body { margin: 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+/* ============================================================
+   ここを自分の Apps Script ウェブアプリ URL に書き換えてください
+   ============================================================ */
+const GAS_URL = "https://script.google.com/macros/s/AKfycbw-sO1pBDPUdZ7f-RptmsOVpMj4PWxFZLu9G2nn_i_QbwlSnXBHJfMggii6dVhQKApO/exec";
+/* この暗証番号は、GAS側の「スクリプト プロパティ」に設定した API_KEY と一致させてください */
+const CORRECT_PIN = "0101";
+
+const PAPER = "#EEE8D8";
+const PAPER_DARK = "#E4DCC5";
+const INK = "#232E44";
+const INK_SOFT = "#4C5975";
+const SHU = "#B23A22";
+const AI = "#2C3F63";
+const MOSS = "#5B6B4E";
+const LINE = "#C7BEA3";
+
+const PEOPLE = { natsumi: "なつみ", kyosuke: "きょうすけ" };
+const OWNERS = [
+  { key: "natsumi", label: "なつみ" },
+  { key: "kyosuke", label: "きょうすけ" },
+  { key: "split", label: "折半" },
+];
+const CATEGORIES = [
+  { key: "食費", color: "#8B6B3D" },
+  { key: "ほまれ", color: "#B8860B" },
+  { key: "日用品", color: "#3D7A6B" },
+  { key: "モネ", color: "#6B4C7A" },
+  { key: "その他", color: "#6B6B63" },
+];
+
+function fmt(n) {
+  const v = Math.round((n + Number.EPSILON) * 100) / 100;
+  return v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function Tag({ color, children }) {
+  return (
+    <span
+      className="inline-block px-2 py-0.5 text-xs rounded-sm border whitespace-nowrap"
+      style={{ color, borderColor: color + "55", background: color + "14", fontFamily: "'Noto Sans JP', sans-serif" }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function HankoStamp({ text, sub }) {
+  return (
+    <div className="relative flex items-center justify-center shrink-0" style={{ width: 108, height: 108 }}>
+      <svg viewBox="0 0 100 100" className="absolute inset-0" style={{ transform: "rotate(-4deg)" }}>
+        <defs>
+          <filter id="inkRough">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" result="noise" seed="7" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" />
+          </filter>
+        </defs>
+        <circle cx="50" cy="50" r="46" fill="none" stroke={SHU} strokeWidth="5" filter="url(#inkRough)" opacity="0.9" />
+      </svg>
+      <div className="flex flex-col items-center justify-center text-center" style={{ transform: "rotate(-4deg)" }}>
+        <span className="leading-none" style={{ fontFamily: "'Shippori Mincho', serif", color: SHU, fontSize: sub ? 15 : 20, fontWeight: 700 }}>
+          {text}
+        </span>
+        {sub && (
+          <span className="mt-1 leading-none" style={{ fontFamily: "'Shippori Mincho', serif", color: SHU, fontSize: 15, fontWeight: 700 }}>
+            {sub}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PinLock({ onUnlock }) {
+  const [digits, setDigits] = useState(["", "", "", ""]);
+  const [shake, setShake] = useState(false);
+  const refs = React.useRef([]);
+
+  useEffect(() => {
+    if (refs.current[0]) refs.current[0].focus();
+  }, []);
+
+  const handleChange = (idx, val) => {
+    const v = val.replace(/[^0-9]/g, "").slice(-1);
+    const next = [...digits];
+    next[idx] = v;
+    setDigits(next);
+
+    if (v && idx < 3) {
+      refs.current[idx + 1] && refs.current[idx + 1].focus();
+    }
+
+    if (next.every((d) => d !== "")) {
+      const pin = next.join("");
+      if (pin === CORRECT_PIN) {
+        onUnlock(pin);
+      } else {
+        setShake(true);
+        setTimeout(() => {
+          setShake(false);
+          setDigits(["", "", "", ""]);
+          refs.current[0] && refs.current[0].focus();
+        }, 400);
+      }
+    }
+  };
+
+  const handleKeyDown = (idx, e) => {
+    if (e.key === "Backspace" && !digits[idx] && idx > 0) {
+      refs.current[idx - 1] && refs.current[idx - 1].focus();
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: PAPER, fontFamily: "'Noto Sans JP', sans-serif" }}>
+      <div className="text-center">
+        <p style={{ fontFamily: "'Shippori Mincho', serif", color: INK }} className="text-lg mb-6">暗証番号を入力してください</p>
+        <div
+          className="flex gap-3 justify-center"
+          style={shake ? { animation: "shake 0.4s" } : {}}
+        >
+          {digits.map((d, idx) => (
+            <input
+              key={idx}
+              ref={(el) => (refs.current[idx] = el)}
+              type="tel"
+              inputMode="numeric"
+              maxLength={1}
+              value={d}
+              onChange={(e) => handleChange(idx, e.target.value)}
+              onKeyDown={(e) => handleKeyDown(idx, e)}
+              className="text-center text-xl rounded-sm border"
+              style={{ width: 48, height: 56, borderColor: LINE, color: INK, background: "#fff" }}
+            />
+          ))}
+        </div>
+        <style>{`
+          @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-6px); }
+            75% { transform: translateX(6px); }
+          }
+        `}</style>
+      </div>
+    </div>
+  );
+}
+
+function Kakeibo({ apiKey }) {
+  const now = new Date();
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [listOpen, setListOpen] = useState(false);
+  const [form, setForm] = useState({
+    day: "",
+    category: "食費",
+    detail: "",
+    amount: "",
+    payer: "natsumi",
+    owner: "natsumi",
+  });
+
+  const configured = GAS_URL.indexOf("YOUR_DEPLOYMENT_ID") === -1;
+
+  const loadEntries = useCallback(async () => {
+    if (!configured) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setErrorMsg("");
+    try {
+      const res = await fetch(`${GAS_URL}?action=list&key=${encodeURIComponent(apiKey)}`);
+      const data = await res.json();
+      if (data.ok) setEntries(data.entries);
+      else setErrorMsg(data.error === "unauthorized" ? "認証に失敗しました。API_KEYを確認してください。" : "データの取得に失敗しました");
+    } catch (e) {
+      console.error(e);
+      setErrorMsg("APIに接続できませんでした。GAS_URLを確認してください。");
+    } finally {
+      setLoading(false);
+    }
+  }, [configured]);
+
+  useEffect(() => {
+    loadEntries();
+  }, [loadEntries]);
+
+  const addEntry = async () => {
+    const amt = parseFloat(form.amount);
+    if (form.amount === "" || isNaN(amt) || amt <= 0) {
+      setErrorMsg("金額を正しく入力してください");
+      return;
+    }
+    if (form.category === "その他" && !form.detail.trim()) {
+      setErrorMsg("「その他」を選択した場合は詳細を入力してください");
+      return;
+    }
+    setSaving(true);
+    setErrorMsg("");
+    try {
+      const params = new URLSearchParams({
+        action: "add",
+        key: apiKey,
+        id: uid(),
+        year: String(selectedYear),
+        month: String(selectedMonth),
+        day: form.day || "",
+        category: form.category,
+        detail: form.category === "その他" ? form.detail.trim() : "",
+        amount: String(amt),
+        payer: form.payer,
+        owner: form.owner,
+      });
+      const res = await fetch(`${GAS_URL}?${params.toString()}`);
+      const data = await res.json();
+      if (data.ok) {
+        setEntries(data.entries);
+        setForm((f) => ({ ...f, day: "", detail: "", amount: "" }));
+      } else {
+        setErrorMsg(data.error || "保存に失敗しました");
+      }
+    } catch (e) {
+      console.error(e);
+      setErrorMsg("保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeEntry = async (id) => {
+    if (!window.confirm("この記録を削除します。よろしいですか？")) return;
+    setSaving(true);
+    setErrorMsg("");
+    try {
+      const res = await fetch(`${GAS_URL}?action=delete&id=${encodeURIComponent(id)}&key=${encodeURIComponent(apiKey)}`);
+      const data = await res.json();
+      if (data.ok) setEntries(data.entries);
+      else setErrorMsg(data.error || "削除に失敗しました");
+    } catch (e) {
+      console.error(e);
+      setErrorMsg("削除に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const currentEntries = useMemo(
+    () =>
+      entries
+        .filter((e) => String(e.year) === String(selectedYear) && String(e.month) === String(selectedMonth))
+        .slice()
+        .sort((a, b) => (a.day || 0) - (b.day || 0)),
+    [entries, selectedYear, selectedMonth]
+  );
+
+  const totals = useMemo(() => {
+    const paid = { natsumi: 0, kyosuke: 0 };
+    const resp = { natsumi: 0, kyosuke: 0 };
+    for (const e of currentEntries) {
+      const amt = parseFloat(e.amount) || 0;
+      if (paid[e.payer] !== undefined) paid[e.payer] += amt;
+      if (e.owner === "split") {
+        resp.natsumi += amt / 2;
+        resp.kyosuke += amt / 2;
+      } else if (resp[e.owner] !== undefined) {
+        resp[e.owner] += amt;
+      }
+    }
+    return { paid, resp, balanceNatsumi: paid.natsumi - resp.natsumi };
+  }, [currentEntries]);
+
+  const settlement = (() => {
+    const b = totals.balanceNatsumi;
+    if (Math.abs(b) < 0.005) return { text: "精算なし", sub: null, amount: 0 };
+    if (b > 0) return { text: "夫→妻", sub: `€${fmt(b)}`, amount: b, from: "きょうすけ", to: "なつみ" };
+    return { text: "妻→夫", sub: `€${fmt(-b)}`, amount: -b, from: "なつみ", to: "きょうすけ" };
+  })();
+
+  const catColor = (key) => (CATEGORIES.find((c) => c.key === key) || {}).color || INK_SOFT;
+
+  if (!configured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: PAPER }}>
+        <div className="max-w-md text-center" style={{ color: INK, fontFamily: "'Noto Sans JP', sans-serif" }}>
+          <p className="mb-2 font-bold">セットアップが必要です</p>
+          <p className="text-sm">index.html 内の <code>GAS_URL</code> を、デプロイした Apps Script のウェブアプリURLに書き換えてください。</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full" style={{ background: PAPER, fontFamily: "'Noto Sans JP', sans-serif" }}>
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <div className="flex items-baseline justify-between border-b pb-4 mb-4" style={{ borderColor: LINE }}>
+          <h1 style={{ fontFamily: "'Shippori Mincho', serif", color: INK, letterSpacing: "0.05em" }} className="text-2xl md:text-3xl font-bold">
+            日下家の家計簿
+          </h1>
+          <span className="text-xs" style={{ color: INK_SOFT }}>
+            {loading ? "読込中…" : saving ? "保存中…" : "同期済み"}
+          </span>
+        </div>
+
+        {errorMsg && (
+          <div className="mb-4 px-3 py-2 text-sm rounded-sm" style={{ background: "#F3DCD5", color: SHU }}>
+            {errorMsg}
+          </div>
+        )}
+
+        {/* year / month selector */}
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <div className="flex items-center gap-1">
+            <button onClick={() => setSelectedYear((y) => y - 1)} className="px-2 py-1 text-sm rounded-sm border" style={{ borderColor: LINE, color: INK_SOFT }}>◀</button>
+            <span className="px-2 text-sm" style={{ fontFamily: "'Shippori Mincho', serif", color: INK }}>{selectedYear}年</span>
+            <button onClick={() => setSelectedYear((y) => y + 1)} className="px-2 py-1 text-sm rounded-sm border" style={{ borderColor: LINE, color: INK_SOFT }}>▶</button>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <button
+                key={m}
+                onClick={() => setSelectedMonth(m)}
+                className="px-2.5 py-1 text-sm rounded-sm"
+                style={{
+                  fontFamily: "'Shippori Mincho', serif",
+                  color: selectedMonth === m ? "#fff" : INK,
+                  background: selectedMonth === m ? INK : "transparent",
+                  border: `1px solid ${selectedMonth === m ? INK : LINE}`,
+                }}
+              >
+                {m}月
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* add entry form */}
+        <div className="rounded-sm border p-4 mb-6" style={{ borderColor: LINE, background: "#F7F3E7" }}>
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-2">
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>日</label>
+              <input type="number" min="1" max="31" value={form.day}
+                onChange={(e) => setForm((f) => ({ ...f, day: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
+            </div>
+            <div className="col-span-3">
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>カテゴリ</label>
+              <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }}>
+                {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.key}</option>)}
+              </select>
+            </div>
+            {form.category === "その他" && (
+              <div className="col-span-3">
+                <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>詳細</label>
+                <input type="text" value={form.detail} onChange={(e) => setForm((f) => ({ ...f, detail: e.target.value }))}
+                  placeholder="内容を入力" className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
+              </div>
+            )}
+            <div className={form.category === "その他" ? "col-span-2" : "col-span-3"}>
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>金額 €</label>
+              <input type="number" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>支払った人</label>
+              <select value={form.payer} onChange={(e) => setForm((f) => ({ ...f, payer: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }}>
+                <option value="natsumi">なつみ</option>
+                <option value="kyosuke">きょうすけ</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>負担者</label>
+              <select value={form.owner} onChange={(e) => setForm((f) => ({ ...f, owner: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }}>
+                {OWNERS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={addEntry} disabled={saving}
+            className="mt-3 px-4 py-1.5 text-sm rounded-sm text-white" style={{ background: INK }}>
+            + 追加
+          </button>
+        </div>
+
+        {/* collapsible split list */}
+        <div className="rounded-sm border mb-8" style={{ borderColor: LINE }}>
+          <button onClick={() => setListOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2.5" style={{ background: PAPER_DARK, color: INK }}>
+            <span style={{ fontFamily: "'Shippori Mincho', serif" }} className="text-sm">入力履歴（{currentEntries.length}件）</span>
+            <span>{listOpen ? "▲" : "▼"}</span>
+          </button>
+          {listOpen && (
+            <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x" style={{ borderColor: LINE }}>
+              {["natsumi", "kyosuke"].map((personKey) => {
+                const personEntries = currentEntries.filter((e) => e.payer === personKey);
+                const color = personKey === "natsumi" ? SHU : AI;
+                return (
+                  <div key={personKey} className="overflow-x-auto">
+                    <div className="px-3 py-2 flex items-center justify-between" style={{ background: "#F7F3E7" }}>
+                      <Tag color={color}>{PEOPLE[personKey]}</Tag>
+                      <span className="text-xs" style={{ color: INK_SOFT }}>{personEntries.length}件</span>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ color: INK_SOFT }}>
+                          <th className="text-left font-normal px-3 py-1.5 text-xs">日</th>
+                          <th className="text-left font-normal px-3 py-1.5 text-xs">カテゴリ</th>
+                          <th className="text-right font-normal px-3 py-1.5 text-xs">金額</th>
+                          <th className="text-left font-normal px-3 py-1.5 text-xs">負担</th>
+                          <th className="px-2 py-1.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {personEntries.length === 0 && (
+                          <tr><td colSpan={5} className="text-center py-6 text-xs" style={{ color: INK_SOFT }}>記録なし</td></tr>
+                        )}
+                        {personEntries.map((e, i) => (
+                          <tr key={e.id} style={{ borderTop: `1px solid ${LINE}`, background: i % 2 ? "#F7F3E7" : "transparent" }}>
+                            <td className="px-3 py-2" style={{ color: INK }}>{e.day || "—"}</td>
+                            <td className="px-3 py-2">
+                              <Tag color={catColor(e.category)}>{e.category}</Tag>
+                              {e.category === "その他" && e.detail && <span className="block text-xs mt-0.5" style={{ color: INK_SOFT }}>{e.detail}</span>}
+                            </td>
+                            <td className="px-3 py-2 text-right" style={{ color: INK }}>€ {fmt(parseFloat(e.amount) || 0)}</td>
+                            <td className="px-3 py-2">
+                              {e.owner === "split" ? <Tag color={MOSS}>折半</Tag> : <Tag color={e.owner === "natsumi" ? SHU : AI}>{PEOPLE[e.owner]}</Tag>}
+                            </td>
+                            <td className="px-2 py-2 text-right">
+                              <button onClick={() => removeEntry(e.id)} style={{ color: INK_SOFT }}>×</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* summary */}
+        <div className="flex flex-col md:flex-row items-stretch gap-4">
+          <div className="flex-1 rounded-sm border p-4" style={{ borderColor: LINE, background: "#F7F3E7" }}>
+            <div className="text-xs mb-3" style={{ color: INK_SOFT }}>{selectedMonth}月の支払い合計（実際に払った額）</div>
+            <div className="flex justify-between items-center py-1.5 border-b" style={{ borderColor: LINE }}>
+              <Tag color={SHU}>なつみ</Tag>
+              <span style={{ color: INK }}>€ {fmt(totals.paid.natsumi)}</span>
+            </div>
+            <div className="flex justify-between items-center py-1.5">
+              <Tag color={AI}>きょうすけ</Tag>
+              <span style={{ color: INK }}>€ {fmt(totals.paid.kyosuke)}</span>
+            </div>
+            <div className="text-xs mt-4 mb-2" style={{ color: INK_SOFT }}>本来の負担額（折半込み）</div>
+            <div className="flex justify-between items-center py-1 text-xs">
+              <span style={{ color: INK_SOFT }}>なつみ</span>
+              <span style={{ color: INK_SOFT }}>€ {fmt(totals.resp.natsumi)}</span>
+            </div>
+            <div className="flex justify-between items-center py-1 text-xs">
+              <span style={{ color: INK_SOFT }}>きょうすけ</span>
+              <span style={{ color: INK_SOFT }}>€ {fmt(totals.resp.kyosuke)}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-sm border p-4 shrink-0" style={{ borderColor: LINE, background: "#F7F3E7", minWidth: 260 }}>
+            <HankoStamp text={settlement.text} sub={settlement.sub} />
+            <div>
+              <div className="text-xs mb-1" style={{ color: INK_SOFT }}>今月の精算</div>
+              {settlement.amount > 0 ? (
+                <div style={{ color: INK, fontFamily: "'Shippori Mincho', serif" }} className="text-base">
+                  {settlement.from} が {settlement.to} に<br />
+                  <span className="text-lg font-bold">€ {fmt(settlement.amount)}</span> 支払う
+                </div>
+              ) : (
+                <div style={{ color: INK_SOFT }} className="text-sm">今月は貸し借りなし</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs mt-6" style={{ color: INK_SOFT }}>
+          データは Google スプレッドシートに保存されます。「負担」を折半にすると、支払った側にもう一方の半額分の貸しが自動計算されます。
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pin, setPin] = useState("");
+
+  if (!unlocked) {
+    return (
+      <PinLock
+        onUnlock={(p) => {
+          setPin(p);
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
+
+  return <Kakeibo apiKey={pin} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
