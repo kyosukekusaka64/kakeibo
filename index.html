@@ -234,7 +234,7 @@ function Kakeibo({ apiKey }) {
         month: String(selectedMonth),
         day: form.day || "",
         category: form.category,
-        detail: form.category === "その他" ? form.detail.trim() : "",
+        detail: form.detail.trim(),
         amount: String(amt),
         payer: form.payer,
         owner: form.owner,
@@ -377,14 +377,12 @@ function Kakeibo({ apiKey }) {
                 {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.key}</option>)}
               </select>
             </div>
-            {form.category === "その他" && (
-              <div className="col-span-3">
-                <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>詳細</label>
-                <input type="text" value={form.detail} onChange={(e) => setForm((f) => ({ ...f, detail: e.target.value }))}
-                  placeholder="内容を入力" className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
-              </div>
-            )}
-            <div className={form.category === "その他" ? "col-span-2" : "col-span-3"}>
+            <div className="col-span-3">
+              <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>詳細{form.category !== "その他" && <span style={{ color: INK_SOFT, fontWeight: 400 }}>（任意）</span>}</label>
+              <input type="text" value={form.detail} onChange={(e) => setForm((f) => ({ ...f, detail: e.target.value }))}
+                placeholder="内容を入力" className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
+            </div>
+            <div className="col-span-2">
               <label className="block text-xs mb-1" style={{ color: INK_SOFT }}>金額 €</label>
               <input type="number" step="0.01" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
                 className="w-full px-2 py-1.5 text-sm rounded-sm border bg-white" style={{ borderColor: LINE, color: INK }} />
@@ -447,7 +445,7 @@ function Kakeibo({ apiKey }) {
                             <td className="px-3 py-2" style={{ color: INK }}>{e.day || "—"}</td>
                             <td className="px-3 py-2">
                               <Tag color={catColor(e.category)}>{e.category}</Tag>
-                              {e.category === "その他" && e.detail && <span className="block text-xs mt-0.5" style={{ color: INK_SOFT }}>{e.detail}</span>}
+                              {e.detail && <span className="block text-xs mt-0.5" style={{ color: INK_SOFT }}>{e.detail}</span>}
                             </td>
                             <td className="px-3 py-2 text-right" style={{ color: INK }}>€ {fmt(parseFloat(e.amount) || 0)}</td>
                             <td className="px-3 py-2">
