@@ -213,7 +213,9 @@ function Kakeibo({ apiKey }) {
     loadEntries();
   }, [loadEntries]);
 
-  const addEntry = async () => {
+  const [confirmDialog, setConfirmDialog] = useState(null); // { type: 'add'|'delete', message, payload }
+
+  const requestAdd = () => {
     const amt = parseFloat(form.amount);
     if (form.amount === "" || isNaN(amt) || amt <= 0) {
       setErrorMsg("金額を正しく入力してください");
@@ -223,49 +225,92 @@ function Kakeibo({ apiKey }) {
       setErrorMsg("「その他」を選択した場合は詳細を入力してください");
       return;
     }
+    setErrorMsg("");
+    const detailPart = form.detail.trim() ? `（${form.detail.trim()}）` : "";
+    setConfirmDialog({
+      type: "add",
+      message: `${selectedMonth}月${form.day ? form.day + "日" : ""} ${form.category}${detailPart} €${amt.toFixed(2)} を追加しますか？`,
+      payload: { amt },
+    });
+  };
+
+  const performAdd = async (amt) => {
+    setConfirmDialog(null);
+    const tempId = uid();
+    const optimisticEntry = {
+      id: tempId,
+      year: selectedYear,
+      month: selectedMonth,
+      day: form.day || "",
+      category: form.category,
+      detail: form.detail.trim(),
+      amount: amt,
+      payer: form.payer,
+      owner: form.owner,
+    };
+    const prevEntries = entries;
+    setEntries((prev) => [...prev, optimisticEntry]);
+    const formSnapshot = form;
+    setForm((f) => ({ ...f, day: "", detail: "", amount: "" }));
     setSaving(true);
     setErrorMsg("");
     try {
       const params = new URLSearchParams({
         action: "add",
         key: apiKey,
-        id: uid(),
+        id: tempId,
         year: String(selectedYear),
         month: String(selectedMonth),
-        day: form.day || "",
-        category: form.category,
-        detail: form.detail.trim(),
+        day: formSnapshot.day || "",
+        category: formSnapshot.category,
+        detail: formSnapshot.detail.trim(),
         amount: String(amt),
-        payer: form.payer,
-        owner: form.owner,
+        payer: formSnapshot.payer,
+        owner: formSnapshot.owner,
       });
       const res = await fetch(`${GAS_URL}?${params.toString()}`);
       const data = await res.json();
       if (data.ok) {
         setEntries(data.entries);
-        setForm((f) => ({ ...f, day: "", detail: "", amount: "" }));
       } else {
+        setEntries(prevEntries);
         setErrorMsg(data.error || "保存に失敗しました");
       }
     } catch (e) {
       console.error(e);
+      setEntries(prevEntries);
       setErrorMsg("保存に失敗しました");
     } finally {
       setSaving(false);
     }
   };
 
-  const removeEntry = async (id) => {
-    if (!window.confirm("この記録を削除します。よろしいですか？")) return;
+  const requestRemove = (entry) => {
+    const detailPart = entry.detail ? `（${entry.detail}）` : "";
+    setConfirmDialog({
+      type: "delete",
+      message: `${entry.category}${detailPart} €${Number(entry.amount).toFixed(2)} を削除しますか？`,
+      payload: { id: entry.id },
+    });
+  };
+
+  const performRemove = async (id) => {
+    setConfirmDialog(null);
+    const prevEntries = entries;
+    setEntries((prev) => prev.filter((e) => e.id !== id));
     setSaving(true);
     setErrorMsg("");
     try {
       const res = await fetch(`${GAS_URL}?action=delete&id=${encodeURIComponent(id)}&key=${encodeURIComponent(apiKey)}`);
       const data = await res.json();
       if (data.ok) setEntries(data.entries);
-      else setErrorMsg(data.error || "削除に失敗しました");
+      else {
+        setEntries(prevEntries);
+        setErrorMsg(data.error || "削除に失敗しました");
+      }
     } catch (e) {
       console.error(e);
+      setEntries(prevEntries);
       setErrorMsg("削除に失敗しました");
     } finally {
       setSaving(false);
@@ -403,7 +448,7 @@ function Kakeibo({ apiKey }) {
               </select>
             </div>
           </div>
-          <button onClick={addEntry} disabled={saving}
+          <button onClick={requestAdd} disabled={saving}
             className="mt-3 px-4 py-1.5 text-sm rounded-sm text-white" style={{ background: INK }}>
             + 追加
           </button>
@@ -452,7 +497,7 @@ function Kakeibo({ apiKey }) {
                               {e.owner === "split" ? <Tag color={MOSS}>折半</Tag> : <Tag color={e.owner === "natsumi" ? SHU : AI}>{PEOPLE[e.owner]}</Tag>}
                             </td>
                             <td className="px-2 py-2 text-right">
-                              <button onClick={() => removeEntry(e.id)} style={{ color: INK_SOFT }}>×</button>
+                              <button onClick={() => requestRemove(e)} style={{ color: INK_SOFT }}>×</button>
                             </td>
                           </tr>
                         ))}
@@ -508,6 +553,43 @@ function Kakeibo({ apiKey }) {
           データは Google スプレッドシートに保存されます。「負担」を折半にすると、支払った側にもう一方の半額分の貸しが自動計算されます。
         </p>
       </div>
+
+      {confirmDialog && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-6"
+          style={{ background: "rgba(0,0,0,0.35)", zIndex: 50 }}
+          onClick={() => setConfirmDialog(null)}
+        >
+          <div
+            className="rounded-sm border p-5 max-w-sm w-full"
+            style={{ background: PAPER, borderColor: LINE }}
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <p style={{ color: INK, fontFamily: "'Shippori Mincho', serif" }} className="text-base mb-5">
+              {confirmDialog.message}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-3 py-1.5 text-sm rounded-sm border"
+                style={{ borderColor: LINE, color: INK_SOFT }}
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmDialog.type === "add") performAdd(confirmDialog.payload.amt);
+                  else if (confirmDialog.type === "delete") performRemove(confirmDialog.payload.id);
+                }}
+                className="px-3 py-1.5 text-sm rounded-sm text-white"
+                style={{ background: INK }}
+              >
+                {confirmDialog.type === "delete" ? "削除する" : "追加する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
